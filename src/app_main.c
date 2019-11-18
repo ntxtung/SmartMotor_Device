@@ -59,7 +59,7 @@
 #define ON_LOCK_SUBSCRIBE_TOPIC "smartmotor/control/lock"
 #define ON_UNLOCK_SUBSCRIBE_TOPIC "smartmotor/control/unlock"
 
-#define PUBLISH_TOPIC "smartmotor/track"
+#define PUBLISH_TOPIC "smartmotor/tracking"
 
 #define ALARM_PIN 25
 // #define LOCK_PIN 30
@@ -149,6 +149,25 @@ void LED28_BlinkTask()
         GPIO_SetLevel(gpioLedBlue, ledBlueLevel); //Set level
         OS_Sleep(1000);                           //Sleep 500 ms
     }
+}
+void OnPublish(void* arg, MQTT_Error_t err)
+{
+    if(err == MQTT_ERROR_NONE)
+        Trace(1, TRACE_PREFIX "MQTT publish success");
+    else
+        Trace(1, TRACE_PREFIX "MQTT publish error, error code:%d",err);
+}
+void MqttPublish(char* payload) {
+    MQTT_Error_t err;
+    if(mqttStatus != MQTT_STATUS_CONNECTED)
+    {
+        Trace(1, TRACE_PREFIX "MQTT not connected to broker! can not publish");
+        return;
+    }
+    Trace(1,TRACE_PREFIX "MQTT publishing");
+    err = MQTT_Publish(client,PUBLISH_TOPIC,payload,strlen(payload),1,2,0,OnPublish,NULL);
+    // if(err != MQTT_ERROR_NONE)
+    //     Trace(1,"MQTT publish error, error code:%d",err);
 }
 
 void GPS_TASK()
@@ -291,7 +310,8 @@ void GPS_TASK()
                      latitude,
                      longitude,
                      percent * 1.0);
-            Trace(1, TRACE_PREFIX "JSON: %s", buffer2);
+            Trace(1, TRACE_PREFIX "JSON: %s", requestPath);
+            MqttPublish(requestPath);
         }
         OS_Sleep(5000);
     }
@@ -307,6 +327,8 @@ void setup()
     PM_PowerEnable(POWER_TYPE_VPAD, true);
     highPowerLed();
 }
+
+
 
 void EventDispatch(API_Event_t *pEvent)
 {
@@ -595,14 +617,6 @@ void AlarmTask(void* pData) {
         GPIO_SetLevel(gpioAlarm, isAlarm); //Set level
         OS_Sleep(500);                           //Sleep 500 ms
     }
-}
-
-void LockTask(void* pData) {
-
-}
-
-void SignalTask(void* pData) {
-
 }
 
 void MainTask(void *pData)
