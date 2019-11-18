@@ -2,7 +2,8 @@
     "files.associations": {
         "gps_parse.h": "c",
         "api_gps.h": "c",
-        "math.h": "c"
+        "math.h": "c",
+        "buffer.h": "c"
     },
     "sdkFolder": "../"
 }

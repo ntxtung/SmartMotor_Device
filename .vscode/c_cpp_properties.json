@@ -6,7 +6,8 @@
                 "${workspaceFolder}/**",
                 "${config:sdkFolder}/include/**",
                 "${config:sdkFolder}/libs/gps/**",
-                "${config:sdkFolder}/libs/utils/**"
+                "${config:sdkFolder}/libs/utils/**",
+                "${config:sdkFolder}/libs/utils/included"
             ],
             "defines": [
                 "_DEBUG",
