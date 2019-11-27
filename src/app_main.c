@@ -32,46 +32,54 @@
 
 #define MAIN_TASK_STACK_SIZE (1024 * 2)
 #define MAIN_TASK_PRIORITY 0
-#define MAIN_TASK_NAME "MAIN Test Task"
-
-#define LED28_BLINK_TASK_STACK_SIZE (1024 * 2)
-#define LED28_BLINK_TASK_PRIORITY 1
-#define LED28_BLINK_TASK_NAME "LED28 Blink Task"
+#define MAIN_TASK_NAME "MAIN Task"
 
 #define GPS_TASK_STACK_SIZE (1024 * 2)
-#define GPS_TASK_PRIORITY 2
+#define GPS_TASK_PRIORITY 1
 #define GPS_TASK_NAME "GPS Task"
 
 #define MQTT_TASK_STACK_SIZE (1024 * 2)
-#define MQTT_TASK_PRIORITY 3
+#define MQTT_TASK_PRIORITY 2
 #define MQTT_TASK_NAME "MQTT Task"
+
+#define ALARM_TASK_STACK_SIZE (1024 * 2)
+#define ALARM_TASK_PRIORITY 3
+#define ALARM_TASK_NAME "Alarm Task"
+
+#define LED27_BLINK_TASK_STACK_SIZE (1024 * 2)
+#define LED27_BLINK_TASK_PRIORITY 4
+#define LED27_BLINK_TASK_NAME "LED27 Blink Task"
+
+#define LED28_BLINK_TASK_STACK_SIZE (1024 * 2)
+#define LED28_BLINK_TASK_PRIORITY 5
+#define LED28_BLINK_TASK_NAME "LED28 Blink Task"
 
 #define TRACE_PREFIX "LOG:: "
 
-#define BROKER_IP "test.mosquitto.org"
+#define BROKER_IP "167.71.194.83"
 #define BROKER_PORT 1883
 #define CLIENT_ID "smartmotorDevice003"
 #define CLIENT_USER NULL
 #define CLIENT_PASS NULL
 
-#define ON_ALL_SUBSCRIBE_TOPIC "smartmotor/control/#"
-#define ON_ALARM_SUBSCRIBE_TOPIC "smartmotor/control/alarm"
-#define ON_LOCK_SUBSCRIBE_TOPIC "smartmotor/control/lock"
-#define ON_UNLOCK_SUBSCRIBE_TOPIC "smartmotor/control/unlock"
+#define ON_ALL_SUBSCRIBE_TOPIC "smartmotor/D01/control/#"
+#define ON_ALARM_SUBSCRIBE_TOPIC "smartmotor/D01/control/alarm"
+#define ON_LOCK_SUBSCRIBE_TOPIC "smartmotor/D01/control/lock"
+#define ON_UNLOCK_SUBSCRIBE_TOPIC "smartmotor/D01/control/unlock"
 
-#define PUBLISH_TOPIC "smartmotor/tracking"
+#define PUBLISH_TOPIC "smartmotor/D01/tracking"
 
-#define ALARM_PIN 25
+#define ALARM_SIGNAL_PIN 25
 // #define LOCK_PIN 30
 // #define SIGNAL_PIN 26
 
 // #define GPS_NMEA_LOG_FILE_PATH "/t/gps_nmea.log"
 
 static HANDLE mainTaskHandle = NULL;
+static HANDLE led27BlinkTaskHandle = NULL;
 static HANDLE led28BlinkTaskHandle = NULL;
 static HANDLE gpsTaskHandle = NULL;
 static HANDLE mqttTaskHandle = NULL;
-
 
 static HANDLE alarmHandle = NULL;
 static HANDLE lockHandle = NULL;
@@ -85,6 +93,9 @@ bool networkFlag = false;
 bool isAlarm = false;
 bool isLock  = false;
 bool isSignal= false;
+
+int mqtt_Status = 0;
+int gps_Status = 0;
 
 static HANDLE semMqttStart = NULL;
 // static HANDLE semNetworkStart = NULL;
@@ -120,34 +131,106 @@ MQTT_Status_t mqttStatus = MQTT_STATUS_DISCONNECTED;
 ///////////////////////
 void highPowerLed()
 {
-    GPIO_config_t gpioPin = {
+    GPIO_config_t gpioPin27 = {
         .mode = GPIO_MODE_OUTPUT,
         .pin = GPIO_PIN27,
         .defaultLevel = GPIO_LEVEL_HIGH};
-    GPIO_Init(gpioPin);
+    GPIO_config_t gpioPin28 = {
+        .mode = GPIO_MODE_OUTPUT,
+        .pin = GPIO_PIN28,
+        .defaultLevel = GPIO_LEVEL_HIGH};
+    GPIO_Init(gpioPin27);
+    GPIO_Init(gpioPin28);
+    int counter = 0;
+    for (counter = 0; counter < 3; counter++) {
+        GPIO_SetLevel(gpioPin27, GPIO_LEVEL_HIGH);
+        GPIO_SetLevel(gpioPin28, GPIO_LEVEL_HIGH);
+        OS_Sleep(200);
+        GPIO_SetLevel(gpioPin27, GPIO_LEVEL_LOW);
+        GPIO_SetLevel(gpioPin28, GPIO_LEVEL_LOW);
+        OS_Sleep(200);
+    }
 }
 
 /////////////////////
 // Task definition //
 /////////////////////
 
-// Nothing else just blink the led28
+// GPS Led status
+void LED27_BlinkTask()
+{
+    static GPIO_LEVEL gpioLevel = GPIO_LEVEL_LOW;
+
+    GPIO_config_t gpioPin27 = {
+        .mode = GPIO_MODE_OUTPUT,
+        .pin = GPIO_PIN27,
+        .defaultLevel = GPIO_LEVEL_LOW};
+    GPIO_Init(gpioPin27);
+    int timer = 100;
+    while (1) {   
+        switch (gps_Status) {
+            // Waiting for what
+            case 0:
+                timer = 500;
+                break;
+            // Stating up    
+            case 1:
+                timer = 1500;
+                break;
+            // Working
+            case 2:
+                timer = 3000;
+                break;
+            default:
+                timer = 10000;
+                break;
+        }
+        gpioLevel = !gpioLevel;
+        GPIO_SetLevel(gpioPin27, gpioLevel);
+        OS_Sleep(timer);
+    }
+}
+
+// MQTT Status
 void LED28_BlinkTask()
 {
-    static GPIO_LEVEL ledBlueLevel = GPIO_LEVEL_LOW;
+    static GPIO_LEVEL gpioLevel = GPIO_LEVEL_LOW;
 
-    GPIO_config_t gpioLedBlue = {
+    GPIO_config_t gpioPin28 = {
         .mode = GPIO_MODE_OUTPUT,
         .pin = GPIO_PIN28,
         .defaultLevel = GPIO_LEVEL_LOW};
-    GPIO_Init(gpioLedBlue);
+    GPIO_Init(gpioPin28);
+    int timer = 100;
+    while (1) {
+        gpioLevel = !gpioLevel;
+        switch (mqtt_Status) {
+            // Waiting for what?
+            case 0:
+                timer = 500;
+                break;
+            // Stating up    
+            case 1:
+                timer = 1500;
+                break;
+            // Connection Good
+            case 2:
+                gpioLevel = GPIO_LEVEL_HIGH;
+                GPIO_SetLevel(gpioPin28, GPIO_LEVEL_LOW);
+                OS_Sleep(1000);
+                timer = 5000;
+                break;
+            // Connection Failed
+            case 3:
+                timer = 100;
+                break;
+            default:
+                timer = 100;
+                break;
+        }
 
-    while (1)
-    {
-        ledBlueLevel = !ledBlueLevel;
-        // Trace(1, TRACE_PREFIX "LED 28 - %d", ledBlueLevel);
-        GPIO_SetLevel(gpioLedBlue, ledBlueLevel); //Set level
-        OS_Sleep(1000);                           //Sleep 500 ms
+        GPIO_SetLevel(gpioPin28, gpioLevel);
+        OS_Sleep(timer);
     }
 }
 void OnPublish(void* arg, MQTT_Error_t err)
@@ -161,6 +244,7 @@ void MqttPublish(char* payload) {
     MQTT_Error_t err;
     if(mqttStatus != MQTT_STATUS_CONNECTED)
     {
+        mqtt_Status = 3;
         Trace(1, TRACE_PREFIX "MQTT not connected to broker! can not publish");
         return;
     }
@@ -175,11 +259,18 @@ void GPS_TASK()
     //wait for gprs register complete
     //The process of GPRS registration network may cause the power supply voltage of GPS to drop,
     //which resulting in GPS restart.
+
+    // Waiting for Network
+    gps_Status = 0;
     while (!networkFlag)
     {
         Trace(1, TRACE_PREFIX "Wait for gprs regiter complete");
         OS_Sleep(2000);
     }
+
+
+    // Starting up...
+    gps_Status = 1;
 
     GPS_Info_t *gpsInfo = Gps_GetInfo();
     uint8_t buffer[300], buffer2[400];
@@ -243,6 +334,7 @@ void GPS_TASK()
 
     Trace(2, TRACE_PREFIX "GPS - Init OK");
 
+    gps_Status = 2;
     while (1)
     {
         if (isGpsOn)
@@ -311,6 +403,7 @@ void GPS_TASK()
                      longitude,
                      percent * 1.0);
             Trace(1, TRACE_PREFIX "JSON: %s", requestPath);
+
             MqttPublish(requestPath);
         }
         OS_Sleep(5000);
@@ -490,8 +583,8 @@ void OnMqttReceived(void *arg, const char *topic, uint32_t payloadLen)
     
     if (strcmp(topic, ON_ALARM_SUBSCRIBE_TOPIC) == 0)
     {
-        Trace(1, TRACE_PREFIX "ALARM!");
-        isLock = true;
+        isAlarm = !isAlarm;
+        Trace(1, TRACE_PREFIX "ALARM! %d", isAlarm);
     }
     // else if (strcmp(topic, ON_LOCK_SUBSCRIBE_TOPIC) == 0)
     // {
@@ -530,6 +623,7 @@ void OnMqttConnection(MQTT_Client_t *client, void *arg, MQTT_Connection_Status_t
     }
     if (status == MQTT_CONNECTION_ACCEPTED)
     {
+        mqtt_Status = 2;
         Trace(1, TRACE_PREFIX "MQTT succeed connect to broker");
         //!!! DO NOT suscribe here(interrupt function), do MQTT suscribe in task, or it will not excute
         event->id = MQTT_EVENT_CONNECTED;
@@ -538,6 +632,7 @@ void OnMqttConnection(MQTT_Client_t *client, void *arg, MQTT_Connection_Status_t
     }
     else
     {
+        mqtt_Status = 3;
         event->id = MQTT_EVENT_DISCONNECTED;
         event->client = client;
         OS_SendEvent(mqttTaskHandle, event, OS_TIME_OUT_WAIT_FOREVER, OS_EVENT_PRI_NORMAL);
@@ -605,17 +700,26 @@ void MqttTask(void *pData)
 }
 
 void AlarmTask(void* pData) {
-    GPIO_config_t gpioAlarm = {
+    GPIO_config_t gpioAlarmSignal = {
+        .mode = GPIO_MODE_OUTPUT,
+        .pin = GPIO_PIN30,
+        .defaultLevel = GPIO_LEVEL_LOW};
+    GPIO_config_t gpioAlarmGround = {
         .mode = GPIO_MODE_OUTPUT,
         .pin = GPIO_PIN25,
-        .defaultLevel = isAlarm};
-    GPIO_Init(gpioAlarm);
+        .defaultLevel = GPIO_LEVEL_LOW};
+
+    GPIO_Init(gpioAlarmSignal);
+    GPIO_Init(gpioAlarmGround);
 
     while (1)
     {
-        // Trace(1, TRACE_PREFIX "LED 28 - %d", ledBlueLevel);
-        GPIO_SetLevel(gpioAlarm, isAlarm); //Set level
-        OS_Sleep(500);                           //Sleep 500 ms
+        if (isAlarm) {
+            GPIO_SetLevel(gpioAlarmSignal, GPIO_LEVEL_HIGH); //Set level
+            OS_Sleep(200);
+        }
+        GPIO_SetLevel(gpioAlarmSignal, GPIO_LEVEL_LOW);
+        OS_Sleep(200);
     }
 }
 
@@ -633,10 +737,11 @@ void MainTask(void *pData)
         .useEvent = true};
     UART_Init(UART1, config);
 
-    led28BlinkTaskHandle = OS_CreateTask(LED28_BlinkTask, NULL, NULL, LED28_BLINK_TASK_STACK_SIZE, LED28_BLINK_TASK_PRIORITY, 0, 0, LED28_BLINK_TASK_NAME);
     gpsTaskHandle = OS_CreateTask(GPS_TASK, NULL, NULL, GPS_TASK_STACK_SIZE, GPS_TASK_PRIORITY, 0, 0, GPS_TASK_NAME);
     mqttTaskHandle = OS_CreateTask(MqttTask, NULL, NULL, MQTT_TASK_STACK_SIZE, MQTT_TASK_PRIORITY, 0, 0, MQTT_TASK_NAME);
-    alarmHandle = OS_CreateTask(AlarmTask, NULL, NULL, MQTT_TASK_STACK_SIZE, 3, 0, 0, "Alarm Task");
+    alarmHandle = OS_CreateTask(AlarmTask, NULL, NULL, ALARM_TASK_STACK_SIZE, ALARM_TASK_PRIORITY, 0, 0, ALARM_TASK_NAME);
+    led27BlinkTaskHandle = OS_CreateTask(LED27_BlinkTask, NULL, NULL, LED27_BLINK_TASK_STACK_SIZE, LED27_BLINK_TASK_PRIORITY, 0, 0, LED27_BLINK_TASK_NAME);
+    led28BlinkTaskHandle = OS_CreateTask(LED28_BlinkTask, NULL, NULL, LED28_BLINK_TASK_STACK_SIZE, LED28_BLINK_TASK_PRIORITY, 0, 0, LED28_BLINK_TASK_NAME);
     
     API_Event_t *event = NULL;
     while (1)
