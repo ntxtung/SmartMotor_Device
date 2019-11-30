@@ -58,16 +58,16 @@
 
 #define BROKER_IP "167.71.194.83"
 #define BROKER_PORT 1883
-#define CLIENT_ID "smartmotorDevice003"
+#define CLIENT_ID "D02"
 #define CLIENT_USER NULL
 #define CLIENT_PASS NULL
 
-#define ON_ALL_SUBSCRIBE_TOPIC "smartmotor/D01/control/#"
-#define ON_ALARM_SUBSCRIBE_TOPIC "smartmotor/D01/control/alarm"
-#define ON_LOCK_SUBSCRIBE_TOPIC "smartmotor/D01/control/lock"
-#define ON_UNLOCK_SUBSCRIBE_TOPIC "smartmotor/D01/control/unlock"
+#define ON_ALL_SUBSCRIBE_TOPIC "smartmotor/D02/control/#"
+#define ON_ALARM_SUBSCRIBE_TOPIC "smartmotor/D02/control/alarm"
+#define ON_LOCK_SUBSCRIBE_TOPIC "smartmotor/D02/control/lock"
+#define ON_UNLOCK_SUBSCRIBE_TOPIC "smartmotor/D02/control/unlock"
 
-#define PUBLISH_TOPIC "smartmotor/D01/tracking"
+#define PUBLISH_TOPIC "smartmotor/D02/tracking"
 
 #define ALARM_SIGNAL_PIN 25
 // #define LOCK_PIN 30
@@ -240,7 +240,7 @@ void OnPublish(void* arg, MQTT_Error_t err)
     else
         Trace(1, TRACE_PREFIX "MQTT publish error, error code:%d",err);
 }
-void MqttPublish(char* payload) {
+void MqttPublish(char* payload, int isRetain) {
     MQTT_Error_t err;
     if(mqttStatus != MQTT_STATUS_CONNECTED)
     {
@@ -249,7 +249,11 @@ void MqttPublish(char* payload) {
         return;
     }
     Trace(1,TRACE_PREFIX "MQTT publishing");
-    err = MQTT_Publish(client,PUBLISH_TOPIC,payload,strlen(payload),1,2,0,OnPublish,NULL);
+    if (isRetain){ 
+        err = MQTT_Publish(client,PUBLISH_TOPIC,payload,strlen(payload),1,2,1,OnPublish,NULL);
+    } else {
+        err = MQTT_Publish(client,PUBLISH_TOPIC,payload,strlen(payload),1,2,0,OnPublish,NULL);
+    }
     // if(err != MQTT_ERROR_NONE)
     //     Trace(1,"MQTT publish error, error code:%d",err);
 }
@@ -404,7 +408,11 @@ void GPS_TASK()
                      percent * 1.0);
             Trace(1, TRACE_PREFIX "JSON: %s", requestPath);
 
-            MqttPublish(requestPath);
+            if (gpsInfo->gga.fix_quality) {
+                MqttPublish(requestPath, 1);
+            } else {
+                MqttPublish(requestPath, 0);
+            }
         }
         OS_Sleep(5000);
     }
