@@ -30,44 +30,47 @@
 //MQTT
 #include "api_mqtt.h"
 
+#define DEBUG 1
+
 #define MAIN_TASK_STACK_SIZE (1024 * 2)
 #define MAIN_TASK_PRIORITY 0
 #define MAIN_TASK_NAME "MAIN Task"
 
-#define GPS_TASK_STACK_SIZE (1024 * 2)
-#define GPS_TASK_PRIORITY 1
+#define GPS_TASK_STACK_SIZE (2048 * 2)
+#define GPS_TASK_PRIORITY 0
 #define GPS_TASK_NAME "GPS Task"
 
-#define MQTT_TASK_STACK_SIZE (1024 * 2)
-#define MQTT_TASK_PRIORITY 2
+#define MQTT_TASK_STACK_SIZE (2048 * 2)
+#define MQTT_TASK_PRIORITY 0
 #define MQTT_TASK_NAME "MQTT Task"
 
 #define ALARM_TASK_STACK_SIZE (1024 * 2)
-#define ALARM_TASK_PRIORITY 3
+#define ALARM_TASK_PRIORITY 1
 #define ALARM_TASK_NAME "Alarm Task"
 
+#define LOCK_TASK_STACK_SIZE (1024 * 2)
+#define LOCK_TASK_PRIORITY 1
+#define LOCK_TASK_NAME "Lock Task"
+
 #define LED27_BLINK_TASK_STACK_SIZE (1024 * 2)
-#define LED27_BLINK_TASK_PRIORITY 4
+#define LED27_BLINK_TASK_PRIORITY 2
 #define LED27_BLINK_TASK_NAME "LED27 Blink Task"
 
 #define LED28_BLINK_TASK_STACK_SIZE (1024 * 2)
-#define LED28_BLINK_TASK_PRIORITY 5
+#define LED28_BLINK_TASK_PRIORITY 2
 #define LED28_BLINK_TASK_NAME "LED28 Blink Task"
 
 #define TRACE_PREFIX "LOG:: "
 
 #define BROKER_IP "167.71.194.83"
 #define BROKER_PORT 1883
-#define CLIENT_ID "D02"
+#define CLIENT_ID "D01"
 #define CLIENT_USER NULL
 #define CLIENT_PASS NULL
 
-#define ON_ALL_SUBSCRIBE_TOPIC "smartmotor/D02/control/#"
-#define ON_ALARM_SUBSCRIBE_TOPIC "smartmotor/D02/control/alarm"
-#define ON_LOCK_SUBSCRIBE_TOPIC "smartmotor/D02/control/lock"
-#define ON_UNLOCK_SUBSCRIBE_TOPIC "smartmotor/D02/control/unlock"
+#define SUBSCRIBE_TOPIC "smartmotor/control/"
 
-#define PUBLISH_TOPIC "smartmotor/D02/tracking"
+#define PUBLISH_TOPIC "smartmotor/track/"
 
 #define ALARM_SIGNAL_PIN 25
 // #define LOCK_PIN 30
@@ -96,6 +99,12 @@ bool isSignal= false;
 
 int mqtt_Status = 0;
 int gps_Status = 0;
+
+char subscribe_topic_id [100] = SUBSCRIBE_TOPIC;
+char publish_topic_id [100] = PUBLISH_TOPIC;
+
+
+uint8_t deviceId[300];
 
 static HANDLE semMqttStart = NULL;
 // static HANDLE semNetworkStart = NULL;
@@ -242,20 +251,20 @@ void OnPublish(void* arg, MQTT_Error_t err)
 }
 void MqttPublish(char* payload, int isRetain) {
     MQTT_Error_t err;
-    if(mqttStatus != MQTT_STATUS_CONNECTED)
+    if(mqttStatus != MQTT_STATUS_CONNECTED || client == NULL)
     {
         mqtt_Status = 3;
         Trace(1, TRACE_PREFIX "MQTT not connected to broker! can not publish");
         return;
-    }
+    } 
     Trace(1,TRACE_PREFIX "MQTT publishing");
+    mqtt_Status = 2;
+    
     if (isRetain){ 
-        err = MQTT_Publish(client,PUBLISH_TOPIC,payload,strlen(payload),1,2,1,OnPublish,NULL);
+        err = MQTT_Publish(client,publish_topic_id,payload,strlen(payload),1,2,1,OnPublish,NULL);
     } else {
-        err = MQTT_Publish(client,PUBLISH_TOPIC,payload,strlen(payload),1,2,0,OnPublish,NULL);
+        err = MQTT_Publish(client,publish_topic_id,payload,strlen(payload),1,2,0,OnPublish,NULL);
     }
-    // if(err != MQTT_ERROR_NONE)
-    //     Trace(1,"MQTT publish error, error code:%d",err);
 }
 
 void GPS_TASK()
@@ -386,7 +395,7 @@ void GPS_TASK()
                 Assert(false, TRACE_PREFIX "NO IMEI");
             // Trace(1, TRACE_PREFIX "Device name:%s",buffer);
             snprintf(requestPath, sizeof(buffer2),
-                     "{\"id\":%s,"
+                     "{\"deviceNumber\":%s,"
                      "\"gpsFixMode\":%d,"
                      "\"bdsFixMode\":%d,"
                      "\"fixQuality\":%d,"
@@ -407,7 +416,6 @@ void GPS_TASK()
                      longitude,
                      percent * 1.0);
             Trace(1, TRACE_PREFIX "JSON: %s", requestPath);
-
             if (gpsInfo->gga.fix_quality) {
                 MqttPublish(requestPath, 1);
             } else {
@@ -428,8 +436,6 @@ void setup()
     PM_PowerEnable(POWER_TYPE_VPAD, true);
     highPowerLed();
 }
-
-
 
 void EventDispatch(API_Event_t *pEvent)
 {
@@ -587,66 +593,63 @@ void EventDispatch(API_Event_t *pEvent)
 // MQTT HANDLE
 void OnMqttReceived(void *arg, const char *topic, uint32_t payloadLen)
 {
-    Trace(1, TRACE_PREFIX "MQTT received publish data request, topic:%s, payload length:%d", topic, payloadLen);
-    
-    if (strcmp(topic, ON_ALARM_SUBSCRIBE_TOPIC) == 0)
-    {
-        isAlarm = !isAlarm;
-        Trace(1, TRACE_PREFIX "ALARM! %d", isAlarm);
-    }
-    // else if (strcmp(topic, ON_LOCK_SUBSCRIBE_TOPIC) == 0)
-    // {
-    //     Trace(1, TRACE_PREFIX "LOCK!");
-    //     isAlarm = !isAlarm;
-    // }
-    // else if (strcmp(topic, ON_UNLOCK_SUBSCRIBE_TOPIC) == 0)
-    // {
-    //     Trace(1, TRACE_PREFIX "UNLOCKED!");
-    //     isLock = false;
-    // }
+    Trace(2, TRACE_PREFIX "MQTT received publish data request, topic:%s, payload length:%d", topic, payloadLen);
 }
 
 void OnMqttReceiedData(void *arg, const uint8_t *data, uint16_t len, MQTT_Flags_t flags)
 {
-    Trace(1, TRACE_PREFIX "MQTT recieved publish data,  length:%d,data:%s", len, data);
+    Trace(2, TRACE_PREFIX "MQTT recieved publish data,  length:%d,data:%s", len, data);
+
+    if (memcmp(data, "0", 1) == 0) {
+        isLock = !isLock;
+        if (isLock) {
+            Trace(2, TRACE_PREFIX "LOCK!");
+        } else {
+            Trace(2, TRACE_PREFIX "UNLOCK!");
+        }
+    } else {
+        Trace(2, TRACE_PREFIX "BUZZ!");
+        isAlarm = 1;
+    }
+
     if (flags == MQTT_FLAG_DATA_LAST)
-        Trace(1, TRACE_PREFIX "MQTT data is last frame");
+        Trace(2, TRACE_PREFIX "MQTT data is last frame");
 }
 void OnMqttSubscribed(void *arg, MQTT_Error_t err)
 {
     if (err != MQTT_ERROR_NONE)
-        Trace(1, TRACE_PREFIX "MQTT subscribe fail,error code:%d", err);
+        Trace(2, TRACE_PREFIX "MQTT subscribe fail,error code:%d", err);
     else
-        Trace(1, TRACE_PREFIX "MQTT subscribe success,topic:%s", (const char *)arg);
+        Trace(2, TRACE_PREFIX "MQTT subscribe success,topic:%s", (const char *)arg);
 }
 
-void OnMqttConnection(MQTT_Client_t *client, void *arg, MQTT_Connection_Status_t status)
+void OnMqttConnection(MQTT_Client_t *in_client, void *arg, MQTT_Connection_Status_t status)
 {
-    Trace(1, TRACE_PREFIX "MQTT connection status:%d", status);
+    Trace(2, TRACE_PREFIX "MQTT connection status:%d", status);
     MQTT_Event_t *event = (MQTT_Event_t *)OS_Malloc(sizeof(MQTT_Event_t));
     if (!event)
     {
-        Trace(1, TRACE_PREFIX "MQTT no memory");
+        Trace(2, TRACE_PREFIX "MQTT no memory");
         return;
     }
     if (status == MQTT_CONNECTION_ACCEPTED)
     {
-        mqtt_Status = 2;
-        Trace(1, TRACE_PREFIX "MQTT succeed connect to broker");
+        // mqtt_Status = 2;
+        Trace(2, TRACE_PREFIX "MQTT succeed connect to broker");
         //!!! DO NOT suscribe here(interrupt function), do MQTT suscribe in task, or it will not excute
         event->id = MQTT_EVENT_CONNECTED;
-        event->client = client;
+        event->client = in_client;
         OS_SendEvent(mqttTaskHandle, event, OS_TIME_OUT_WAIT_FOREVER, OS_EVENT_PRI_NORMAL);
     }
     else
     {
-        mqtt_Status = 3;
+        // mqtt_Status = 3;
+        Trace(2, TRACE_PREFIX "MQTT connect to broker fail,error code:%d", status);
         event->id = MQTT_EVENT_DISCONNECTED;
-        event->client = client;
+        event->client = in_client;
         OS_SendEvent(mqttTaskHandle, event, OS_TIME_OUT_WAIT_FOREVER, OS_EVENT_PRI_NORMAL);
-        Trace(1, TRACE_PREFIX "MQTT connect to broker fail,error code:%d", status);
     }
-    Trace(1, TRACE_PREFIX "MQTT OnMqttConnection() end");
+    Trace(2, TRACE_PREFIX "MQTT OnMqttConnection() end");
 }
 
 void MqttTaskEventDispatch(MQTT_Event_t *pEvent)
@@ -655,17 +658,15 @@ void MqttTaskEventDispatch(MQTT_Event_t *pEvent)
     {
         case MQTT_EVENT_CONNECTED:
             mqttStatus = MQTT_STATUS_CONNECTED;
-            Trace(1, TRACE_PREFIX "MQTT connected, now subscribe topic: %s, %s, %s", ON_ALARM_SUBSCRIBE_TOPIC, ON_LOCK_SUBSCRIBE_TOPIC, ON_UNLOCK_SUBSCRIBE_TOPIC);
+            Trace(2, TRACE_PREFIX "MqttTaskEventDispatch MQTT connected, now subscribe: %s", subscribe_topic_id);
             MQTT_Error_t err;
             MQTT_SetInPubCallback(pEvent->client, OnMqttReceived, OnMqttReceiedData, NULL);
-            // err = MQTT_Subscribe(pEvent->client,ON_ALARM_SUBSCRIBE_TOPIC,2,OnMqttSubscribed,(void*)ON_ALARM_SUBSCRIBE_TOPIC);
-            err = MQTT_Subscribe(pEvent->client, ON_ALL_SUBSCRIBE_TOPIC, 2, OnMqttSubscribed, (void *)ON_ALL_SUBSCRIBE_TOPIC);
-            // err = MQTT_Subscribe(pEvent->client,ON_UNLOCK_SUBSCRIBE_TOPIC,2,OnMqttSubscribed,(void*)ON_UNLOCK_SUBSCRIBE_TOPIC);
+            err = MQTT_Subscribe(pEvent->client,subscribe_topic_id,2,OnMqttSubscribed,(void*)subscribe_topic_id);
             if (err != MQTT_ERROR_NONE)
-                Trace(1, TRACE_PREFIX "MQTT subscribe error, error code:%d", err);
-            // StartTimerPublish(PUBLISH_INTERVAL,pEvent->client);
+                Trace(2, TRACE_PREFIX "MqttTaskEventDispatch MQTT sub err, code:%d", err);
             break;
         case MQTT_EVENT_DISCONNECTED:
+            Trace(2, TRACE_PREFIX "MqttTaskEventDispatch MQTT STATUS DISCONNECTED");
             mqttStatus = MQTT_STATUS_DISCONNECTED;
             break;
         default:
@@ -677,11 +678,12 @@ void MqttTask(void *pData)
 {
     MQTT_Event_t *event = NULL;
     semMqttStart = OS_CreateSemaphore(0);
-    Trace(1, TRACE_PREFIX "Waiting for Semaphore MQTT");
+    // Trace(1, TRACE_PREFIX "Waiting for Semaphore MQTT");
     OS_WaitForSemaphore(semMqttStart, OS_WAIT_FOREVER);
-    Trace(1, TRACE_PREFIX "Semaphore MQTT signed");
+    // Trace(1, TRACE_PREFIX "Semaphore MQTT signed");
     OS_DeleteSemaphore(semMqttStart);
-    Trace(1, TRACE_PREFIX "Start MQTT test with host: %s, port %d and user: %s, pass: %s", BROKER_IP, BROKER_PORT, CLIENT_USER, CLIENT_PASS);
+    Trace(2, TRACE_PREFIX "Start MQTT test with host: %s, port %d and user: %s, pass: %s", BROKER_IP, BROKER_PORT, CLIENT_USER, CLIENT_PASS);
+    
     client = MQTT_ClientNew();
     MQTT_Connect_Info_t ci;
     MQTT_Error_t err;
@@ -692,10 +694,10 @@ void MqttTask(void *pData)
     ci.keep_alive = 60;
     ci.clean_session = 1;
     ci.use_ssl = false;
-
+    
     err = MQTT_Connect(client, BROKER_IP, BROKER_PORT, OnMqttConnection, NULL, &ci);
     if (err != MQTT_ERROR_NONE)
-        Trace(1, TRACE_PREFIX "MQTT connect fail,error code:%d", err);
+        Trace(2, TRACE_PREFIX "MQTT connect fail,error code:%d", err);
 
     while (1)
     {
@@ -731,6 +733,24 @@ void AlarmTask(void* pData) {
     }
 }
 
+void LockTask(void* pData) {
+    GPIO_config_t gpioLockSignal = {
+        .mode = GPIO_MODE_OUTPUT,
+        .pin = GPIO_PIN26,
+        .defaultLevel = GPIO_LEVEL_LOW};
+
+    GPIO_Init(gpioLockSignal);
+
+    while (1)
+    {
+        if (isLock) {
+            GPIO_SetLevel(gpioLockSignal, GPIO_LEVEL_HIGH); //Set level
+        } else {
+            GPIO_SetLevel(gpioLockSignal, GPIO_LEVEL_LOW);
+        }
+    }
+}
+
 void MainTask(void *pData)
 {
     TIME_SetIsAutoUpdateRtcTime(true);
@@ -745,11 +765,25 @@ void MainTask(void *pData)
         .useEvent = true};
     UART_Init(UART1, config);
 
+    memset(deviceId, 0, sizeof(deviceId));
+    if (!INFO_GetIMEI(deviceId))
+        Assert(false, TRACE_PREFIX "NO IMEI");
+
+    strcat(subscribe_topic_id, (char*) deviceId);
+    strcat(publish_topic_id, (char*) deviceId);
+
+    Trace(3, TRACE_PREFIX "Sub topic: %s", subscribe_topic_id);
+    Trace(3, TRACE_PREFIX "Pub topic: %s", publish_topic_id);
+
     gpsTaskHandle = OS_CreateTask(GPS_TASK, NULL, NULL, GPS_TASK_STACK_SIZE, GPS_TASK_PRIORITY, 0, 0, GPS_TASK_NAME);
     mqttTaskHandle = OS_CreateTask(MqttTask, NULL, NULL, MQTT_TASK_STACK_SIZE, MQTT_TASK_PRIORITY, 0, 0, MQTT_TASK_NAME);
     alarmHandle = OS_CreateTask(AlarmTask, NULL, NULL, ALARM_TASK_STACK_SIZE, ALARM_TASK_PRIORITY, 0, 0, ALARM_TASK_NAME);
-    led27BlinkTaskHandle = OS_CreateTask(LED27_BlinkTask, NULL, NULL, LED27_BLINK_TASK_STACK_SIZE, LED27_BLINK_TASK_PRIORITY, 0, 0, LED27_BLINK_TASK_NAME);
-    led28BlinkTaskHandle = OS_CreateTask(LED28_BlinkTask, NULL, NULL, LED28_BLINK_TASK_STACK_SIZE, LED28_BLINK_TASK_PRIORITY, 0, 0, LED28_BLINK_TASK_NAME);
+    lockHandle = OS_CreateTask(LockTask, NULL, NULL, LOCK_TASK_STACK_SIZE, LOCK_TASK_PRIORITY, 0, 0, LOCK_TASK_NAME);
+    
+    if(DEBUG) {
+        led27BlinkTaskHandle = OS_CreateTask(LED27_BlinkTask, NULL, NULL, LED27_BLINK_TASK_STACK_SIZE, LED27_BLINK_TASK_PRIORITY, 0, 0, LED27_BLINK_TASK_NAME);
+        led28BlinkTaskHandle = OS_CreateTask(LED28_BlinkTask, NULL, NULL, LED28_BLINK_TASK_STACK_SIZE, LED28_BLINK_TASK_PRIORITY, 0, 0, LED28_BLINK_TASK_NAME);
+    }
     
     API_Event_t *event = NULL;
     while (1)
@@ -764,7 +798,7 @@ void MainTask(void *pData)
     }
 }
 
-void smartmotor_Main()
+void SmartMotor_Device_Main()
 {
     setup();
     mainTaskHandle = OS_CreateTask(MainTask, NULL, NULL, MAIN_TASK_STACK_SIZE, MAIN_TASK_PRIORITY, 0, 0, MAIN_TASK_NAME);
