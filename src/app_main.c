@@ -30,7 +30,7 @@
 //MQTT
 #include "api_mqtt.h"
 
-#define DEBUG 1
+#define DEBUG 0
 
 #define MAIN_TASK_STACK_SIZE (1024 * 2)
 #define MAIN_TASK_PRIORITY 0
@@ -107,6 +107,8 @@ char publish_topic_id [100] = PUBLISH_TOPIC;
 uint8_t deviceId[300];
 
 static HANDLE semMqttStart = NULL;
+static HANDLE semAlarm = NULL;
+static HANDLE semLock = NULL;
 // static HANDLE semNetworkStart = NULL;
 HANDLE semGetCellInfo = NULL;
 
@@ -601,15 +603,11 @@ void OnMqttReceiedData(void *arg, const uint8_t *data, uint16_t len, MQTT_Flags_
     Trace(2, TRACE_PREFIX "MQTT recieved publish data,  length:%d,data:%s", len, data);
 
     if (memcmp(data, "0", 1) == 0) {
+        OS_ReleaseSemaphore(semLock);
         isLock = !isLock;
-        if (isLock) {
-            Trace(2, TRACE_PREFIX "LOCK!");
-        } else {
-            Trace(2, TRACE_PREFIX "UNLOCK!");
-        }
     } else {
-        Trace(2, TRACE_PREFIX "BUZZ!");
-        isAlarm = 1;
+        OS_ReleaseSemaphore(semAlarm);
+        // isAlarm = 1;
     }
 
     if (flags == MQTT_FLAG_DATA_LAST)
@@ -724,12 +722,14 @@ void AlarmTask(void* pData) {
 
     while (1)
     {
-        if (isAlarm) {
-            GPIO_SetLevel(gpioAlarmSignal, GPIO_LEVEL_HIGH); //Set level
-            OS_Sleep(200);
-        }
+        OS_WaitForSemaphore(semAlarm, OS_WAIT_FOREVER);
+        Trace(2, TRACE_PREFIX "BUZZING!");
+        GPIO_SetLevel(gpioAlarmSignal, GPIO_LEVEL_HIGH); //Set level
+        OS_Sleep(3000);
+        // if (isAlarm) {
+        // }
+        Trace(2, TRACE_PREFIX "STOP BUZZING!");
         GPIO_SetLevel(gpioAlarmSignal, GPIO_LEVEL_LOW);
-        OS_Sleep(200);
     }
 }
 
@@ -743,10 +743,13 @@ void LockTask(void* pData) {
 
     while (1)
     {
+        OS_WaitForSemaphore(semLock, OS_WAIT_FOREVER);
         if (isLock) {
             GPIO_SetLevel(gpioLockSignal, GPIO_LEVEL_HIGH); //Set level
+            Trace(2, TRACE_PREFIX "LOCK!");
         } else {
             GPIO_SetLevel(gpioLockSignal, GPIO_LEVEL_LOW);
+            Trace(2, TRACE_PREFIX "UNLOCK!");
         }
     }
 }
@@ -764,6 +767,9 @@ void MainTask(void *pData)
         .rxCallback = NULL,
         .useEvent = true};
     UART_Init(UART1, config);
+
+    semAlarm = OS_CreateSemaphore(0);
+    semLock = OS_CreateSemaphore(0);
 
     memset(deviceId, 0, sizeof(deviceId));
     if (!INFO_GetIMEI(deviceId))
