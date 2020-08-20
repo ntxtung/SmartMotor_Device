@@ -62,7 +62,7 @@
 
 #define TRACE_PREFIX "LOG:: "
 
-#define BROKER_IP "167.71.194.83"
+#define BROKER_IP "206.189.90.18"
 #define BROKER_PORT 1883
 #define CLIENT_ID "D01"
 #define CLIENT_USER NULL
@@ -79,8 +79,6 @@
 // #define GPS_NMEA_LOG_FILE_PATH "/t/gps_nmea.log"
 
 static HANDLE mainTaskHandle = NULL;
-static HANDLE led27BlinkTaskHandle = NULL;
-static HANDLE led28BlinkTaskHandle = NULL;
 static HANDLE gpsTaskHandle = NULL;
 static HANDLE mqttTaskHandle = NULL;
 
@@ -136,6 +134,7 @@ typedef enum
 } MQTT_Status_t;
 
 MQTT_Status_t mqttStatus = MQTT_STATUS_DISCONNECTED;
+GPIO_config_t gpioPin27, gpioPin28;
 
 ///////////////////////
 // Helper definition //
@@ -163,93 +162,43 @@ void highPowerLed()
     }
 }
 
-/////////////////////
-// Task definition //
-/////////////////////
+void blink(GPIO_config_t gpioPin) {
+    GPIO_SetLevel(gpioPin, GPIO_LEVEL_LOW);
+    OS_Sleep(200);
+    GPIO_SetLevel(gpioPin, GPIO_LEVEL_HIGH);
+    OS_Sleep(200);
+    GPIO_SetLevel(gpioPin, GPIO_LEVEL_LOW);
+    OS_Sleep(200);
+}
 
-// GPS Led status
-void LED27_BlinkTask()
+void doubleBlink(GPIO_config_t gpioPin) {
+    GPIO_SetLevel(gpioPin, GPIO_LEVEL_LOW);
+    OS_Sleep(100);
+    GPIO_SetLevel(gpioPin, GPIO_LEVEL_HIGH);
+    OS_Sleep(100);
+    GPIO_SetLevel(gpioPin, GPIO_LEVEL_LOW);
+    OS_Sleep(100);
+    GPIO_SetLevel(gpioPin, GPIO_LEVEL_HIGH);
+    OS_Sleep(100);
+    GPIO_SetLevel(gpioPin, GPIO_LEVEL_LOW);
+    OS_Sleep(100);
+}
+
+void OnPublish(void* arg, MQTT_Error_t err)
 {
-    static GPIO_LEVEL gpioLevel = GPIO_LEVEL_LOW;
-
     GPIO_config_t gpioPin27 = {
         .mode = GPIO_MODE_OUTPUT,
         .pin = GPIO_PIN27,
-        .defaultLevel = GPIO_LEVEL_LOW};
+        .defaultLevel = GPIO_LEVEL_HIGH};
+    
     GPIO_Init(gpioPin27);
-    int timer = 100;
-    while (1) {   
-        switch (gps_Status) {
-            // Waiting for what
-            case 0:
-                timer = 500;
-                break;
-            // Stating up    
-            case 1:
-                timer = 1500;
-                break;
-            // Working
-            case 2:
-                timer = 3000;
-                break;
-            default:
-                timer = 10000;
-                break;
-        }
-        gpioLevel = !gpioLevel;
-        GPIO_SetLevel(gpioPin27, gpioLevel);
-        OS_Sleep(timer);
-    }
-}
-
-// MQTT Status
-void LED28_BlinkTask()
-{
-    static GPIO_LEVEL gpioLevel = GPIO_LEVEL_LOW;
-
-    GPIO_config_t gpioPin28 = {
-        .mode = GPIO_MODE_OUTPUT,
-        .pin = GPIO_PIN28,
-        .defaultLevel = GPIO_LEVEL_LOW};
-    GPIO_Init(gpioPin28);
-    int timer = 100;
-    while (1) {
-        gpioLevel = !gpioLevel;
-        switch (mqtt_Status) {
-            // Waiting for what?
-            case 0:
-                timer = 500;
-                break;
-            // Stating up    
-            case 1:
-                timer = 1500;
-                break;
-            // Connection Good
-            case 2:
-                gpioLevel = GPIO_LEVEL_HIGH;
-                GPIO_SetLevel(gpioPin28, GPIO_LEVEL_LOW);
-                OS_Sleep(1000);
-                timer = 5000;
-                break;
-            // Connection Failed
-            case 3:
-                timer = 100;
-                break;
-            default:
-                timer = 100;
-                break;
-        }
-
-        GPIO_SetLevel(gpioPin28, gpioLevel);
-        OS_Sleep(timer);
-    }
-}
-void OnPublish(void* arg, MQTT_Error_t err)
-{
-    if(err == MQTT_ERROR_NONE)
+    if(err == MQTT_ERROR_NONE) {
         Trace(1, TRACE_PREFIX "MQTT publish success");
-    else
+        blink(gpioPin27);
+    } else {
         Trace(1, TRACE_PREFIX "MQTT publish error, error code:%d",err);
+        doubleBlink(gpioPin27);
+    }
 }
 void MqttPublish(char* payload, int isRetain) {
     MQTT_Error_t err;
@@ -348,8 +297,15 @@ void GPS_TASK()
         Trace(2, TRACE_PREFIX "GPS - Set nmea output interval fail");
 
     Trace(2, TRACE_PREFIX "GPS - Init OK");
-
+    
     gps_Status = 2;
+
+    GPIO_config_t gpioPin28 = {
+        .mode = GPIO_MODE_OUTPUT,
+        .pin = GPIO_PIN28,
+        .defaultLevel = GPIO_LEVEL_LOW};
+    GPIO_Init(gpioPin28);
+
     while (1)
     {
         if (isGpsOn)
@@ -392,9 +348,9 @@ void GPS_TASK()
             uint8_t percent;
             uint16_t v = PM_Voltage(&percent);
             // Trace(1, TRACE_PREFIX "Power:%d %d",v,percent);
-            memset(buffer, 0, sizeof(buffer));
-            if (!INFO_GetIMEI(buffer))
-                Assert(false, TRACE_PREFIX "NO IMEI");
+            // memset(buffer, 0, sizeof(buffer));
+            // if (!INFO_GetIMEI(buffer))
+            //     Assert(false, TRACE_PREFIX "NO IMEI");
             // Trace(1, TRACE_PREFIX "Device name:%s",buffer);
             snprintf(requestPath, sizeof(buffer2),
                      "{\"deviceNumber\":%s,"
@@ -407,7 +363,7 @@ void GPS_TASK()
                      "\"lat\":%f,"
                      "\"lon\":%f,"
                      "\"batt\":%.1f}",
-                     buffer,
+                     deviceId,
                      gpsInfo->gsa[0].fix_type,
                      gpsInfo->gsa[1].fix_type,
                      gpsInfo->gga.fix_quality,
@@ -420,8 +376,10 @@ void GPS_TASK()
             Trace(1, TRACE_PREFIX "JSON: %s", requestPath);
             if (gpsInfo->gga.fix_quality) {
                 MqttPublish(requestPath, 1);
+                blink(gpioPin28);
             } else {
                 MqttPublish(requestPath, 0);
+                doubleBlink(gpioPin28);
             }
         }
         OS_Sleep(5000);
@@ -712,24 +670,28 @@ void AlarmTask(void* pData) {
         .mode = GPIO_MODE_OUTPUT,
         .pin = GPIO_PIN30,
         .defaultLevel = GPIO_LEVEL_LOW};
-    GPIO_config_t gpioAlarmGround = {
-        .mode = GPIO_MODE_OUTPUT,
-        .pin = GPIO_PIN25,
-        .defaultLevel = GPIO_LEVEL_LOW};
 
     GPIO_Init(gpioAlarmSignal);
-    GPIO_Init(gpioAlarmGround);
-
     while (1)
     {
         OS_WaitForSemaphore(semAlarm, OS_WAIT_FOREVER);
         Trace(2, TRACE_PREFIX "BUZZING!");
-        GPIO_SetLevel(gpioAlarmSignal, GPIO_LEVEL_HIGH); //Set level
-        OS_Sleep(3000);
-        // if (isAlarm) {
-        // }
-        Trace(2, TRACE_PREFIX "STOP BUZZING!");
+        //---------------------------------
+        GPIO_SetLevel(gpioAlarmSignal, GPIO_LEVEL_HIGH);
+        OS_Sleep(200);
         GPIO_SetLevel(gpioAlarmSignal, GPIO_LEVEL_LOW);
+        OS_Sleep(200);
+        GPIO_SetLevel(gpioAlarmSignal, GPIO_LEVEL_HIGH);
+        OS_Sleep(200);
+        GPIO_SetLevel(gpioAlarmSignal, GPIO_LEVEL_LOW);
+        OS_Sleep(200);
+        GPIO_SetLevel(gpioAlarmSignal, GPIO_LEVEL_HIGH);
+        OS_Sleep(200);
+        GPIO_SetLevel(gpioAlarmSignal, GPIO_LEVEL_LOW);
+        OS_Sleep(200);
+        //---------------------------------
+        Trace(2, TRACE_PREFIX "STOP BUZZING!");
+        // GPIO_SetLevel(gpioAlarmSignal, GPIO_LEVEL_LOW);
     }
 }
 
@@ -786,10 +748,10 @@ void MainTask(void *pData)
     alarmHandle = OS_CreateTask(AlarmTask, NULL, NULL, ALARM_TASK_STACK_SIZE, ALARM_TASK_PRIORITY, 0, 0, ALARM_TASK_NAME);
     lockHandle = OS_CreateTask(LockTask, NULL, NULL, LOCK_TASK_STACK_SIZE, LOCK_TASK_PRIORITY, 0, 0, LOCK_TASK_NAME);
     
-    if(DEBUG) {
-        led27BlinkTaskHandle = OS_CreateTask(LED27_BlinkTask, NULL, NULL, LED27_BLINK_TASK_STACK_SIZE, LED27_BLINK_TASK_PRIORITY, 0, 0, LED27_BLINK_TASK_NAME);
-        led28BlinkTaskHandle = OS_CreateTask(LED28_BlinkTask, NULL, NULL, LED28_BLINK_TASK_STACK_SIZE, LED28_BLINK_TASK_PRIORITY, 0, 0, LED28_BLINK_TASK_NAME);
-    }
+    // if(DEBUG) {
+    //     led27BlinkTaskHandle = OS_CreateTask(LED27_BlinkTask, NULL, NULL, LED27_BLINK_TASK_STACK_SIZE, LED27_BLINK_TASK_PRIORITY, 0, 0, LED27_BLINK_TASK_NAME);
+    //     led28BlinkTaskHandle = OS_CreateTask(LED28_BlinkTask, NULL, NULL, LED28_BLINK_TASK_STACK_SIZE, LED28_BLINK_TASK_PRIORITY, 0, 0, LED28_BLINK_TASK_NAME);
+    // }
     
     API_Event_t *event = NULL;
     while (1)
